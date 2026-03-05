@@ -274,16 +274,16 @@
         let currentUser = null;
         let unsubscribeSnap = null;
 
-        // --- Template de Dados Base (Fallback) ---
+        // --- Template Base (Para garantir que a UI nunca fica vazia antes do load) ---
         const templateData = [
-            { id: 1, desc: 'Serviços em AWS', fornecedor: 'AWS', orcado: [221634, 225078, 228838, 242940, 246258, 249299, 258700, 258700, 258700, 258700, 344783, 285540], orcadoTotal: 3091870, realizado: Array(12).fill(0) }
+            { id: 1, desc: 'Aguardando Sincronização...', fornecedor: '-', orcado: Array(12).fill(0), orcadoTotal: 0, realizado: Array(12).fill(0) }
         ];
 
         // --- Estado Global ---
         const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
         let currentYear = "2026";
         let selectedMonth = 0; 
-        let appData = []; 
+        let appData = JSON.parse(JSON.stringify(templateData)); // Previne estar vazio
         let manualOrcadoAno = null; 
         let myBarChart = null;
         let myPieChart = null;
@@ -297,11 +297,21 @@
             return `R$ ${(value / 1000).toFixed(0)}k`;
         }
 
-        function showToast(msg) {
+        function showToast(msg, isError = false) {
             const toast = document.getElementById('toast');
+            const icon = toast.querySelector('i');
             document.getElementById('toast-msg').innerText = msg;
+            
+            if(isError) {
+                toast.classList.replace('bg-emerald-600', 'bg-red-600');
+                icon.classList.replace('fa-check-circle', 'fa-exclamation-triangle');
+            } else {
+                toast.classList.replace('bg-red-600', 'bg-emerald-600');
+                icon.classList.replace('fa-exclamation-triangle', 'fa-check-circle');
+            }
+
             toast.classList.remove('translate-x-[150%]');
-            setTimeout(() => toast.classList.add('translate-x-[150%]'), 3000);
+            setTimeout(() => toast.classList.add('translate-x-[150%]'), 4000);
         }
 
         // --- Lógica de Integração com Google Sheets ---
@@ -310,83 +320,74 @@
                 if (!confirm("Isso atualizará os valores do Budget Orçado diretamente com os dados atuais do Google Sheets. \n\nOs seus dados 'Realizados' (gastos lançados) NÃO serão perdidos. Deseja continuar?")) return;
                 
                 document.getElementById('global-loader').style.display = 'flex';
-                document.querySelector('#global-loader p').innerText = 'Lendo planilhas e localizando meses...';
+                document.querySelector('#global-loader p').innerText = 'Lendo planilha do Google Sheets...';
                 
                 const sheetId = '1TqDx9G3A_8U8VGmbqGe3YeoGTiQzGjftOz0P3s9cOO8';
                 const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
                 
-                const response = await fetch(url);
-                const text = await response.text();
+                let response, text;
+                try {
+                    response = await fetch(url);
+                    text = await response.text();
+                } catch(e) {
+                    throw new Error("Erro de Rede. Verifique se a planilha está com o link público ('Qualquer pessoa com o link').");
+                }
                 
+                // Se a planilha não for pública, o Google retorna HTML e o indexOf('{') falha
+                if(!text.includes('google.visualization.Query.setResponse')) {
+                    throw new Error("A planilha não está acessível. Altere as permissões do Google Sheets para 'Leitor'.");
+                }
+
                 const jsonStr = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1);
                 const sheetData = JSON.parse(jsonStr);
                 
                 let newAppData = [];
                 let idCounter = 1;
 
-                // Função hiper-segura para extrair números contornando formatações R$ ou texto do Sheets
+                // Função de segurança extrema para garantir que extrai apenas o número
                 const parseSheetNumber = (cell) => {
-                    if (!cell || (cell.v === null && cell.f === undefined)) return 0;
+                    if (!cell) return 0;
                     if (typeof cell.v === 'number') return cell.v;
                     
-                    let str = String(cell.v !== null && cell.v !== undefined ? cell.v : (cell.f || ''));
-                    str = str.trim();
-                    if (str === '-' || str === '') return 0;
+                    let str = String(cell.f || cell.v || '').trim();
+                    if (str === '-' || str === '' || str.toLowerCase() === 'nd') return 0;
                     
-                    // Remove símbolos de moeda e espaços em branco
-                    str = str.replace(/R\$\s?/gi, '').replace(/\s/g, '');
+                    // Limpar todos os símbolos estranhos, deixando apenas números, vírgulas e pontos
+                    str = str.replace(/[R\$ \s]/gi, '');
                     
-                    // Tratamento universal de pontos e vírgulas para formato BR ou US
-                    if (str.includes(',')) {
-                        str = str.replace(/\./g, '').replace(',', '.'); // Formato BR: remove ponto milhar, vírgula vira ponto
-                    } else {
-                        str = str.replace(/,/g, ''); // Formato US: remove vírgula milhar
+                    // Tratamento para formato monetário Brasileiro (1.200,50) vs Americano (1,200.50)
+                    if (str.includes(',') && str.includes('.')) {
+                        let lastComma = str.lastIndexOf(',');
+                        let lastDot = str.lastIndexOf('.');
+                        if (lastComma > lastDot) {
+                            str = str.replace(/\./g, '').replace(',', '.'); // BR
+                        } else {
+                            str = str.replace(/,/g, ''); // US
+                        }
+                    } else if (str.includes(',')) {
+                        str = str.replace(',', '.'); // Apenas virgula (1200,50)
                     }
-                    
+
                     const num = parseFloat(str);
                     return isNaN(num) ? 0 : num;
                 };
 
-                // Identifica automaticamente onde estão as colunas na planilha baseado no cabeçalho
-                let headerRow = [];
-                let dataStartIndex = 1;
-                
-                // Procurar linha de cabeçalho nas primeiras 5 linhas
-                for (let r = 0; r < Math.min(5, sheetData.table.rows.length); r++) {
-                    const rowStrings = sheetData.table.rows[r].c.map(cell => cell ? String(cell.v || cell.f || '').toLowerCase().trim() : '');
-                    if (rowStrings.some(s => s.includes('jan')) && rowStrings.some(s => s.includes('fev'))) {
-                        headerRow = rowStrings;
-                        dataStartIndex = r + 1; // Dados começam na linha a seguir ao cabeçalho
-                        break;
-                    }
-                }
-                
-                if (headerRow.length === 0 && sheetData.table.rows.length > 0) {
-                    headerRow = sheetData.table.rows[0].c.map(cell => cell ? String(cell.v || cell.f || '').toLowerCase().trim() : '');
-                }
-                
-                const findCol = (keywords, defaultIdx) => {
-                    const idx = headerRow.findIndex(h => keywords.some(kw => h.includes(kw)));
-                    return idx !== -1 ? idx : defaultIdx;
-                };
+                // As suas colunas são estáticas: A(0)=Desc, B(1)=Forn, C(2) até N(13)=Meses, O(14)=Total
+                const idxDesc = 0;
+                const idxForn = 1;
+                const indicesMeses = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+                const idxTotal = 14;
 
-                // Mapeamento dinâmico
-                const idxDesc = findCol(['descri', 'serviço', 'item', 'budget'], 0);
-                const idxForn = findCol(['fornecedor', 'vendor', 'empresa', 'parceiro'], 1);
-                
-                const mesesKeywords = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
-                const indicesMeses = mesesKeywords.map((kw, i) => findCol([kw], i + 2)); // fallback incremental
-                const idxTotal = findCol(['total'], 14);
-
-                // Processar as linhas
-                for (let rowIndex = dataStartIndex; rowIndex < sheetData.table.rows.length; rowIndex++) {
+                // Ignorar a primeira linha (cabeçalho)
+                for (let rowIndex = 1; rowIndex < sheetData.table.rows.length; rowIndex++) {
                     const row = sheetData.table.rows[rowIndex];
                     const c = row.c;
                     
                     if (!c || !c[idxDesc]) continue;
                     
                     const desc = String(c[idxDesc].v || c[idxDesc].f || '').trim();
-                    if (desc === '' || desc.toLowerCase().includes('total')) continue; 
+                    // IMPORTANTE: Evita carregar a linha final de Totais Globais para não duplicar o Budget
+                    if (desc === '' || desc.toLowerCase().includes('total') || desc.toLowerCase().includes('orçado')) continue; 
                     
                     const fornecedor = (c[idxForn] && (c[idxForn].v || c[idxForn].f)) ? String(c[idxForn].v || c[idxForn].f).trim() : 'Diversos';
                     
@@ -395,12 +396,15 @@
                         orcado.push(parseSheetNumber(c[indicesMeses[i]]));
                     }
 
+                    // Ler total da coluna O
                     let orcadoTotalSheet = parseSheetNumber(c[idxTotal]);
                     
+                    // Se não tiver na coluna O, calcula a soma dos meses
                     if (orcadoTotalSheet === 0) {
                         orcadoTotalSheet = orcado.reduce((a, b) => a + b, 0);
                     }
                     
+                    // Preservar os gastos que o utilizador já inseriu no painel
                     let realizado = Array(12).fill(0);
                     const existingItem = appData.find(item => item.desc === desc);
                     if (existingItem) {
@@ -419,18 +423,18 @@
                 
                 if (newAppData.length > 0) {
                     appData = newAppData;
+                    manualOrcadoAno = null; // Remove a forçagem manual para o novo Budget assumir
                     await saveDataToCloud();
                     updateUI();
-                    showToast('Linhas, meses e valores importados perfeitamente!');
+                    showToast('Linhas e Valores do Sheets importados e somados com sucesso!');
                 } else {
-                    alert('Nenhuma linha de orçamento válida foi encontrada na planilha.');
+                    alert('Nenhuma linha de orçamento válida foi encontrada. Verifique as colunas do Google Sheets.');
                 }
             } catch (error) {
                 console.error('Erro na sincronização:', error);
-                alert('Falha ao acessar o Google Sheets. Certifique-se de que o link continua "Público para Leitura".');
+                alert(error.message || 'Falha ao acessar o Google Sheets.');
             } finally {
                 document.getElementById('global-loader').style.display = 'none';
-                document.querySelector('#global-loader p').innerText = 'A sincronizar com a base de dados...';
             }
         }
 
@@ -443,12 +447,23 @@
                     await signInAnonymously(auth);
                 }
             } catch (error) {
-                console.error("Erro na autenticação:", error);
+                console.error("Erro na autenticação Firebase:", error);
                 document.getElementById('global-loader').style.display = 'none';
+                showToast("Erro de Conexão com Firebase. Ative o 'Authentication -> Anonymous' no Console do Firebase.", true);
+                updateUI(); // Renderiza vazio para a UI não quebrar
             }
         }
 
+        // Adiciona listener para garantir que loadYearData só rode se autenticado
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUser = user;
+                await loadYearData(currentYear);
+            }
+        });
+
         function getCollectionRef() {
+            if(!currentUser) return null;
             return collection(db, 'artifacts', appId, 'users', currentUser.uid, 'budgets_anuais');
         }
 
@@ -456,48 +471,59 @@
             if (!currentUser) return;
             
             document.getElementById('global-loader').style.display = 'flex';
+            document.querySelector('#global-loader p').innerText = `Lendo Banco de Dados (${year})...`;
             
-            if (unsubscribeSnap) {
-                unsubscribeSnap();
-            }
+            if (unsubscribeSnap) unsubscribeSnap();
 
-            const docRef = doc(getCollectionRef(), year);
-            const docSnap = await getDoc(docRef);
-            
-            if (!docSnap.exists()) {
-                const initialSeed = JSON.parse(JSON.stringify(templateData));
-                await setDoc(docRef, { year: year, data: initialSeed, manualOrcadoAno: null });
-                appData = initialSeed;
-                manualOrcadoAno = null;
-            } else {
-                appData = docSnap.data().data;
-                manualOrcadoAno = docSnap.data().manualOrcadoAno !== undefined ? docSnap.data().manualOrcadoAno : null;
-            }
-
-            unsubscribeSnap = onSnapshot(docRef, (snapshot) => {
-                if (snapshot.exists()) {
-                    appData = snapshot.data().data;
-                    manualOrcadoAno = snapshot.data().manualOrcadoAno !== undefined ? snapshot.data().manualOrcadoAno : null;
-                    updateUI();
-                    document.getElementById('global-loader').style.display = 'none';
+            try {
+                const docRef = doc(getCollectionRef(), year);
+                const docSnap = await getDoc(docRef);
+                
+                if (!docSnap.exists()) {
+                    // Inicializa ano vazio se não existir
+                    await setDoc(docRef, { year: year, data: appData, manualOrcadoAno: null });
+                    manualOrcadoAno = null;
+                } else {
+                    appData = docSnap.data().data || appData;
+                    manualOrcadoAno = docSnap.data().manualOrcadoAno !== undefined ? docSnap.data().manualOrcadoAno : null;
                 }
-            }, (error) => {
-                console.error("Erro no onSnapshot:", error);
+
+                unsubscribeSnap = onSnapshot(docRef, (snapshot) => {
+                    if (snapshot.exists()) {
+                        appData = snapshot.data().data;
+                        manualOrcadoAno = snapshot.data().manualOrcadoAno !== undefined ? snapshot.data().manualOrcadoAno : null;
+                        updateUI();
+                        document.getElementById('global-loader').style.display = 'none';
+                    }
+                }, (error) => {
+                    console.error("Erro onSnapshot (Regras do Firebase):", error);
+                    document.getElementById('global-loader').style.display = 'none';
+                    alert("Acesso Negado ao Banco de Dados. Vá ao Firebase -> Firestore Database -> Rules, e defina: allow read, write: if true;");
+                });
+            } catch(e) {
+                console.error("Erro ao carregar dados do Firebase:", e);
                 document.getElementById('global-loader').style.display = 'none';
-            });
+                alert("Falha ao comunicar com o Banco de Dados. Verifique as regras de segurança (Test Mode).");
+            }
         }
 
         async function saveDataToCloud() {
-            if (!currentUser) return;
+            if (!currentUser) {
+                showToast("Não é possível salvar. Firebase não conectado.", true);
+                return;
+            }
             try {
                 document.getElementById('global-loader').style.display = 'flex';
+                document.querySelector('#global-loader p').innerText = 'Gravando no Banco de Dados...';
+                
                 const docRef = doc(getCollectionRef(), currentYear);
                 await setDoc(docRef, { year: currentYear, data: appData, manualOrcadoAno: manualOrcadoAno }, { merge: true });
+                
                 document.getElementById('global-loader').style.display = 'none';
-                showToast('Alterações guardadas com sucesso!');
+                showToast('Salvo no Banco de Dados com sucesso!');
             } catch (error) {
-                console.error("Erro ao guardar dados:", error);
-                alert("Ocorreu um erro ao tentar guardar as suas alterações.");
+                console.error("Erro ao gravar dados:", error);
+                alert("Erro ao gravar. Vá ao Firebase -> Firestore Database -> Rules, e certifique-se que estão em Test Mode (allow read, write: if true).");
                 document.getElementById('global-loader').style.display = 'none';
             }
         }
@@ -603,6 +629,7 @@
         // --- Lógica de Edição Manual do Budget Anual ---
         function getCalculatedOrcadoAno() {
             return appData.reduce((acc, item) => {
+                // Utiliza a soma das colunas reais se o total tiver vindo 0 da planilha
                 let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal !== null && !isNaN(item.orcadoTotal) && item.orcadoTotal !== 0) 
                                       ? item.orcadoTotal 
                                       : item.orcado.reduce((a, b) => a + (b||0), 0);
@@ -648,7 +675,6 @@
             toggleBudgetEdit(false);
         }
 
-        // Configuração dos eventos de clique (seguro após carregamento)
         document.getElementById('display-budget-container').addEventListener('click', () => toggleBudgetEdit(true));
         document.getElementById('btn-save-budget').addEventListener('click', saveManualBudget);
         document.getElementById('btn-clear-budget').addEventListener('click', clearManualBudget);
@@ -908,14 +934,6 @@
         document.getElementById('btn-upload').addEventListener('click', openUploadModal);
         document.getElementById('btn-close-modal').addEventListener('click', closeUploadModal);
         document.getElementById('btn-cancel-modal').addEventListener('click', closeUploadModal);
-
-        // --- Arranque da Aplicação ---
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                currentUser = user;
-                await loadYearData(currentYear);
-            }
-        });
 
         initAuth();
 
