@@ -88,8 +88,20 @@
             </div>
             <div>
                 <p class="text-sm font-medium text-slate-500 leading-tight mb-1">Budget Orçado de Infraestrutura <br/><span class="text-blue-600 font-bold">(Capex e Opex)</span></p>
-                <p id="kpi-orcado-ano" class="text-2xl font-bold text-slate-900">R$ 0,00</p>
-                <p class="text-xs text-slate-400 mt-1 font-medium">Somatório do Orçado total <span class="lbl-ano-atual">2026</span></p>
+                
+                <div id="display-budget-container" class="flex items-center gap-2 group cursor-pointer" onclick="toggleBudgetEdit(true)" title="Clique para editar o orçamento anual">
+                    <p id="kpi-orcado-ano" class="text-2xl font-bold text-slate-900 transition-colors group-hover:text-blue-600">R$ 0,00</p>
+                    <i class="fas fa-pencil-alt text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity"></i>
+                </div>
+                
+                <div id="edit-budget-container" class="hidden items-center gap-2 mt-1">
+                    <span class="text-xl font-bold text-slate-900">R$</span>
+                    <input type="number" id="input-manual-budget" class="text-lg font-bold text-slate-900 bg-white border border-blue-500 rounded px-2 py-1 w-28 focus:outline-none focus:ring-2 focus:ring-blue-500" onkeydown="if(event.key === 'Enter') saveManualBudget()" />
+                    <button onclick="saveManualBudget()" class="bg-emerald-500 hover:bg-emerald-600 text-white w-8 h-8 rounded flex items-center justify-center transition-colors" title="Salvar valor"><i class="fas fa-check"></i></button>
+                    <button onclick="clearManualBudget()" class="bg-slate-200 hover:bg-slate-300 text-slate-600 w-8 h-8 rounded flex items-center justify-center transition-colors" title="Restaurar soma automática do Sheets"><i class="fas fa-undo"></i></button>
+                </div>
+                
+                <p class="text-xs text-slate-400 mt-1 font-medium" id="kpi-orcado-desc">Somatório do Orçado total <span class="lbl-ano-atual">2026</span></p>
             </div>
         </div>
         <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex items-center gap-4">
@@ -265,8 +277,8 @@
         // --- Template de Dados Base (Fallback) ---
         // Este array servirá apenas caso não consiga sincronizar com a planilha inicialmente
         const templateData = [
-            { id: 1, desc: 'Serviços em AWS', fornecedor: 'AWS', orcado: [221634, 225078, 228838, 242940, 246258, 249299, 258700, 258700, 258700, 258700, 344783, 285540], realizado: Array(12).fill(0) },
-            { id: 2, desc: 'Licenciamento Gsuite', fornecedor: 'Sauter', orcado: [36665, 36665, 36665, 48731, 48731, 48731, 48731, 48731, 48731, 48731, 48731, 48731], realizado: Array(12).fill(0) }
+            { id: 1, desc: 'Serviços em AWS', fornecedor: 'AWS', orcado: [221634, 225078, 228838, 242940, 246258, 249299, 258700, 258700, 258700, 258700, 344783, 285540], orcadoTotal: 3091870, realizado: Array(12).fill(0) },
+            { id: 2, desc: 'Licenciamento Gsuite', fornecedor: 'Sauter', orcado: [36665, 36665, 36665, 48731, 48731, 48731, 48731, 48731, 48731, 48731, 48731, 48731], orcadoTotal: 535213, realizado: Array(12).fill(0) }
             // O restante agora é carregado inteligentemente direto do Google Sheets!
         ];
 
@@ -275,6 +287,7 @@
         let currentYear = "2026";
         let selectedMonth = 0; 
         let appData = []; // Dados reativos para o ano selecionado
+        let manualOrcadoAno = null; // Guarda a sobreposição manual do budget anual
         let myBarChart = null;
         let myPieChart = null;
 
@@ -317,27 +330,42 @@
                 
                 let newAppData = [];
                 let idCounter = 1;
+
+                // Função de conversão blindada para não falhar com formatações do Sheets (R$, espaços, pontos)
+                const parseSheetNumber = (cell) => {
+                    if (!cell || cell.v === null || cell.v === undefined) return 0;
+                    if (typeof cell.v === 'number') return cell.v;
+                    const str = String(cell.v).trim();
+                    if (str === '-' || str === '') return 0;
+                    // Limpa tudo que não seja número, vírgula ou sinal negativo
+                    const cleanStr = str.replace(/[^\d,-]/g, '').replace(',', '.');
+                    const num = parseFloat(cleanStr);
+                    return isNaN(num) ? 0 : num;
+                };
                 
-                sheetData.table.rows.forEach((row) => {
+                sheetData.table.rows.forEach((row, rowIndex) => {
                     const c = row.c;
                     // Se a linha estiver vazia ou não tiver a primeira coluna, ignora
                     if (!c || !c[0] || !c[0].v) return;
                     
                     const desc = String(c[0].v).trim();
-                    // Ignorar o cabeçalho da planilha
-                    if (desc.toLowerCase().includes('descrição') || desc.toLowerCase().includes('budget') || desc === '') return; 
+                    // Ignorar o cabeçalho exato da planilha
+                    if (rowIndex === 0 || desc.toLowerCase() === 'descrição' || desc === '') return; 
                     
                     const fornecedor = (c[1] && c[1].v) ? String(c[1].v).trim() : 'Diversos';
                     
                     const orcado = [];
                     // As colunas de Janeiro a Dezembro são as posições de índice 2 a 13 no Array
                     for (let i = 2; i <= 13; i++) {
-                        let val = 0;
-                        if (c[i] && c[i].v !== null) {
-                            // Converte de maneira robusta, limpando símbolos de Reais e pontos
-                            val = typeof c[i].v === 'number' ? c[i].v : parseFloat(String(c[i].v).replace(/[^\d,-]/g, '').replace(',', '.'));
-                        }
-                        orcado.push(isNaN(val) ? 0 : val);
+                        orcado.push(parseSheetNumber(c[i]));
+                    }
+
+                    // Coluna O (índice 14): Lê DIRETAMENTE a coluna "Orçado Total 2026" da planilha
+                    let orcadoTotalSheet = parseSheetNumber(c[14]);
+                    
+                    // Fallback de segurança: se a coluna 14 não for lida, soma os meses localmente
+                    if (orcadoTotalSheet === 0) {
+                        orcadoTotalSheet = orcado.reduce((a, b) => a + b, 0);
                     }
                     
                     // IMPORTANTE: Mantém os valores "Realizados" que já estejam salvos no Firebase
@@ -352,6 +380,7 @@
                         desc: desc,
                         fornecedor: fornecedor,
                         orcado: orcado,
+                        orcadoTotal: orcadoTotalSheet, // Guarda com exatidão o número da Coluna O
                         realizado: realizado
                     });
                 });
@@ -405,15 +434,18 @@
             
             if (!docSnap.exists()) {
                 const initialSeed = JSON.parse(JSON.stringify(templateData));
-                await setDoc(docRef, { year: year, data: initialSeed });
+                await setDoc(docRef, { year: year, data: initialSeed, manualOrcadoAno: null });
                 appData = initialSeed;
+                manualOrcadoAno = null;
             } else {
                 appData = docSnap.data().data;
+                manualOrcadoAno = docSnap.data().manualOrcadoAno !== undefined ? docSnap.data().manualOrcadoAno : null;
             }
 
             unsubscribeSnap = onSnapshot(docRef, (snapshot) => {
                 if (snapshot.exists()) {
                     appData = snapshot.data().data;
+                    manualOrcadoAno = snapshot.data().manualOrcadoAno !== undefined ? snapshot.data().manualOrcadoAno : null;
                     updateUI();
                     document.getElementById('global-loader').style.display = 'none';
                 }
@@ -428,7 +460,7 @@
             try {
                 document.getElementById('global-loader').style.display = 'flex';
                 const docRef = doc(getCollectionRef(), currentYear);
-                await setDoc(docRef, { year: currentYear, data: appData }, { merge: true });
+                await setDoc(docRef, { year: currentYear, data: appData, manualOrcadoAno: manualOrcadoAno }, { merge: true });
                 document.getElementById('global-loader').style.display = 'none';
                 showToast('Alterações guardadas com sucesso no Firebase!');
             } catch (error) {
@@ -538,12 +570,60 @@
             return `<span class="text-slate-400 text-sm italic">Pendente</span>`;
         }
 
+        // --- Lógica de Edição Manual do Budget Anual ---
+        function getCalculatedOrcadoAno() {
+            return appData.reduce((acc, item) => {
+                let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal > 0) 
+                                      ? item.orcadoTotal 
+                                      : item.orcado.reduce((a, b) => a + (b||0), 0);
+                return acc + orcadoItemTotal;
+            }, 0);
+        }
+
+        window.toggleBudgetEdit = function(show) {
+            const displayCont = document.getElementById('display-budget-container');
+            const editCont = document.getElementById('edit-budget-container');
+            
+            if(show) {
+                displayCont.classList.add('hidden');
+                displayCont.classList.remove('flex');
+                editCont.classList.remove('hidden');
+                editCont.classList.add('flex');
+                
+                const calculated = getCalculatedOrcadoAno();
+                document.getElementById('input-manual-budget').value = manualOrcadoAno !== null ? manualOrcadoAno : calculated;
+                document.getElementById('input-manual-budget').focus();
+            } else {
+                editCont.classList.add('hidden');
+                editCont.classList.remove('flex');
+                displayCont.classList.remove('hidden');
+                displayCont.classList.add('flex');
+            }
+        };
+
+        window.saveManualBudget = function() {
+            const val = parseFloat(document.getElementById('input-manual-budget').value);
+            if(!isNaN(val)) {
+                manualOrcadoAno = val;
+                updateKPIs();
+                saveDataToCloud();
+            }
+            window.toggleBudgetEdit(false);
+        };
+
+        window.clearManualBudget = function() {
+            manualOrcadoAno = null;
+            updateKPIs();
+            saveDataToCloud();
+            window.toggleBudgetEdit(false);
+        };
+
         function updateKPIs() {
-            let orcadoAno = 0, realizadoAno = 0;
+            let orcadoAno = manualOrcadoAno !== null ? manualOrcadoAno : getCalculatedOrcadoAno();
+            let realizadoAno = 0;
             let orcadoMes = 0, realizadoMes = 0;
 
             appData.forEach(item => {
-                orcadoAno += item.orcado.reduce((a, b) => a + (b||0), 0);
                 realizadoAno += item.realizado.reduce((a, b) => a + (b||0), 0);
                 orcadoMes += item.orcado[selectedMonth] || 0;
                 realizadoMes += item.realizado[selectedMonth] || 0;
@@ -553,6 +633,18 @@
             const economiaMes = orcadoMes - realizadoMes;
 
             document.getElementById('kpi-orcado-ano').innerText = formatCurrency(orcadoAno);
+            
+            const descEl = document.getElementById('kpi-orcado-desc');
+            if (manualOrcadoAno !== null) {
+                descEl.innerHTML = `Valor ajustado manualmente <span class="lbl-ano-atual">${currentYear}</span>`;
+                descEl.classList.remove('text-slate-400');
+                descEl.classList.add('text-amber-500');
+            } else {
+                descEl.innerHTML = `Somatório do Orçado total <span class="lbl-ano-atual">${currentYear}</span>`;
+                descEl.classList.remove('text-amber-500');
+                descEl.classList.add('text-slate-400');
+            }
+
             document.getElementById('kpi-realizado-ano').innerText = formatCurrency(realizadoAno);
             
             const kpiEconAnoEl = document.getElementById('kpi-economia-ano');
@@ -659,9 +751,12 @@
         function getPieChartData() {
             const supplierMap = {};
             appData.forEach(item => {
-                const orcadoTotal = item.orcado.reduce((a, b) => a + (b||0), 0);
-                if (supplierMap[item.fornecedor]) supplierMap[item.fornecedor] += orcadoTotal;
-                else supplierMap[item.fornecedor] = orcadoTotal;
+                let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal > 0) 
+                                      ? item.orcadoTotal 
+                                      : item.orcado.reduce((a, b) => a + (b||0), 0);
+                                      
+                if (supplierMap[item.fornecedor]) supplierMap[item.fornecedor] += orcadoItemTotal;
+                else supplierMap[item.fornecedor] = orcadoItemTotal;
             });
 
             const sorted = Object.entries(supplierMap).sort((a, b) => b[1] - a[1]);
