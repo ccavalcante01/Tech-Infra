@@ -270,22 +270,21 @@
         const analytics = getAnalytics(app);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const appId = "budget-controle-47f94"; // Identificador fixo para o seu projeto
+        const appId = "budget-controle-47f94";
         let currentUser = null;
         let unsubscribeSnap = null;
 
         // --- Template de Dados Base (Fallback) ---
         const templateData = [
-            { id: 1, desc: 'Serviços em AWS', fornecedor: 'AWS', orcado: [221634, 225078, 228838, 242940, 246258, 249299, 258700, 258700, 258700, 258700, 344783, 285540], orcadoTotal: 3091870, realizado: Array(12).fill(0) },
-            { id: 2, desc: 'Licenciamento Gsuite', fornecedor: 'Sauter', orcado: [36665, 36665, 36665, 48731, 48731, 48731, 48731, 48731, 48731, 48731, 48731, 48731], orcadoTotal: 535213, realizado: Array(12).fill(0) }
+            { id: 1, desc: 'Serviços em AWS', fornecedor: 'AWS', orcado: [221634, 225078, 228838, 242940, 246258, 249299, 258700, 258700, 258700, 258700, 344783, 285540], orcadoTotal: 3091870, realizado: Array(12).fill(0) }
         ];
 
         // --- Estado Global ---
         const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
         let currentYear = "2026";
         let selectedMonth = 0; 
-        let appData = []; // Dados reativos para o ano selecionado
-        let manualOrcadoAno = null; // Guarda a sobreposição manual do budget anual
+        let appData = []; 
+        let manualOrcadoAno = null; 
         let myBarChart = null;
         let myPieChart = null;
 
@@ -311,9 +310,8 @@
                 if (!confirm("Isso atualizará os valores do Budget Orçado diretamente com os dados atuais do Google Sheets. \n\nOs seus dados 'Realizados' (gastos lançados) NÃO serão perdidos. Deseja continuar?")) return;
                 
                 document.getElementById('global-loader').style.display = 'flex';
-                document.querySelector('#global-loader p').innerText = 'Conectando ao Google Sheets...';
+                document.querySelector('#global-loader p').innerText = 'Lendo planilhas e localizando meses...';
                 
-                // O ID da planilha
                 const sheetId = '1TqDx9G3A_8U8VGmbqGe3YeoGTiQzGjftOz0P3s9cOO8';
                 const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
                 
@@ -326,32 +324,78 @@
                 let newAppData = [];
                 let idCounter = 1;
 
+                // Função hiper-segura para extrair números contornando formatações R$ ou texto do Sheets
                 const parseSheetNumber = (cell) => {
-                    if (!cell || cell.v === null || cell.v === undefined) return 0;
+                    if (!cell || (cell.v === null && cell.f === undefined)) return 0;
                     if (typeof cell.v === 'number') return cell.v;
-                    const str = String(cell.v).trim();
+                    
+                    let str = String(cell.v !== null && cell.v !== undefined ? cell.v : (cell.f || ''));
+                    str = str.trim();
                     if (str === '-' || str === '') return 0;
-                    const cleanStr = str.replace(/[^\d,-]/g, '').replace(',', '.');
-                    const num = parseFloat(cleanStr);
+                    
+                    // Remove símbolos de moeda e espaços em branco
+                    str = str.replace(/R\$\s?/gi, '').replace(/\s/g, '');
+                    
+                    // Tratamento universal de pontos e vírgulas para formato BR ou US
+                    if (str.includes(',')) {
+                        str = str.replace(/\./g, '').replace(',', '.'); // Formato BR: remove ponto milhar, vírgula vira ponto
+                    } else {
+                        str = str.replace(/,/g, ''); // Formato US: remove vírgula milhar
+                    }
+                    
+                    const num = parseFloat(str);
                     return isNaN(num) ? 0 : num;
                 };
+
+                // Identifica automaticamente onde estão as colunas na planilha baseado no cabeçalho
+                let headerRow = [];
+                let dataStartIndex = 1;
                 
-                sheetData.table.rows.forEach((row, rowIndex) => {
+                // Procurar linha de cabeçalho nas primeiras 5 linhas
+                for (let r = 0; r < Math.min(5, sheetData.table.rows.length); r++) {
+                    const rowStrings = sheetData.table.rows[r].c.map(cell => cell ? String(cell.v || cell.f || '').toLowerCase().trim() : '');
+                    if (rowStrings.some(s => s.includes('jan')) && rowStrings.some(s => s.includes('fev'))) {
+                        headerRow = rowStrings;
+                        dataStartIndex = r + 1; // Dados começam na linha a seguir ao cabeçalho
+                        break;
+                    }
+                }
+                
+                if (headerRow.length === 0 && sheetData.table.rows.length > 0) {
+                    headerRow = sheetData.table.rows[0].c.map(cell => cell ? String(cell.v || cell.f || '').toLowerCase().trim() : '');
+                }
+                
+                const findCol = (keywords, defaultIdx) => {
+                    const idx = headerRow.findIndex(h => keywords.some(kw => h.includes(kw)));
+                    return idx !== -1 ? idx : defaultIdx;
+                };
+
+                // Mapeamento dinâmico
+                const idxDesc = findCol(['descri', 'serviço', 'item', 'budget'], 0);
+                const idxForn = findCol(['fornecedor', 'vendor', 'empresa', 'parceiro'], 1);
+                
+                const mesesKeywords = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+                const indicesMeses = mesesKeywords.map((kw, i) => findCol([kw], i + 2)); // fallback incremental
+                const idxTotal = findCol(['total'], 14);
+
+                // Processar as linhas
+                for (let rowIndex = dataStartIndex; rowIndex < sheetData.table.rows.length; rowIndex++) {
+                    const row = sheetData.table.rows[rowIndex];
                     const c = row.c;
-                    if (!c || !c[0] || !c[0].v) return;
                     
-                    const desc = String(c[0].v).trim();
-                    // Evita adicionar linhas de cabeçalho ou linhas de totais que duplicariam os valores
-                    if (rowIndex === 0 || desc.toLowerCase() === 'descrição' || desc === '' || desc.toLowerCase().includes('total')) return; 
+                    if (!c || !c[idxDesc]) continue;
                     
-                    const fornecedor = (c[1] && c[1].v) ? String(c[1].v).trim() : 'Diversos';
+                    const desc = String(c[idxDesc].v || c[idxDesc].f || '').trim();
+                    if (desc === '' || desc.toLowerCase().includes('total')) continue; 
+                    
+                    const fornecedor = (c[idxForn] && (c[idxForn].v || c[idxForn].f)) ? String(c[idxForn].v || c[idxForn].f).trim() : 'Diversos';
                     
                     const orcado = [];
-                    for (let i = 2; i <= 13; i++) {
-                        orcado.push(parseSheetNumber(c[i]));
+                    for (let i = 0; i < 12; i++) {
+                        orcado.push(parseSheetNumber(c[indicesMeses[i]]));
                     }
 
-                    let orcadoTotalSheet = parseSheetNumber(c[14]);
+                    let orcadoTotalSheet = parseSheetNumber(c[idxTotal]);
                     
                     if (orcadoTotalSheet === 0) {
                         orcadoTotalSheet = orcado.reduce((a, b) => a + b, 0);
@@ -371,19 +415,19 @@
                         orcadoTotal: orcadoTotalSheet,
                         realizado: realizado
                     });
-                });
+                }
                 
                 if (newAppData.length > 0) {
                     appData = newAppData;
                     await saveDataToCloud();
                     updateUI();
-                    showToast('Linhas e Valores sincronizados com sucesso a partir do Sheets!');
+                    showToast('Linhas, meses e valores importados perfeitamente!');
                 } else {
                     alert('Nenhuma linha de orçamento válida foi encontrada na planilha.');
                 }
             } catch (error) {
                 console.error('Erro na sincronização:', error);
-                alert('Falha ao aceder ao Google Sheets. Certifique-se de que o link da planilha continua "Público para Leitura".');
+                alert('Falha ao acessar o Google Sheets. Certifique-se de que o link continua "Público para Leitura".');
             } finally {
                 document.getElementById('global-loader').style.display = 'none';
                 document.querySelector('#global-loader p').innerText = 'A sincronizar com a base de dados...';
@@ -450,7 +494,7 @@
                 const docRef = doc(getCollectionRef(), currentYear);
                 await setDoc(docRef, { year: currentYear, data: appData, manualOrcadoAno: manualOrcadoAno }, { merge: true });
                 document.getElementById('global-loader').style.display = 'none';
-                showToast('Alterações guardadas com sucesso no Firebase!');
+                showToast('Alterações guardadas com sucesso!');
             } catch (error) {
                 console.error("Erro ao guardar dados:", error);
                 alert("Ocorreu um erro ao tentar guardar as suas alterações.");
@@ -559,7 +603,7 @@
         // --- Lógica de Edição Manual do Budget Anual ---
         function getCalculatedOrcadoAno() {
             return appData.reduce((acc, item) => {
-                let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal !== null && !isNaN(item.orcadoTotal)) 
+                let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal !== null && !isNaN(item.orcadoTotal) && item.orcadoTotal !== 0) 
                                       ? item.orcadoTotal 
                                       : item.orcado.reduce((a, b) => a + (b||0), 0);
                 return acc + orcadoItemTotal;
@@ -604,7 +648,7 @@
             toggleBudgetEdit(false);
         }
 
-        // Conectar os Event Listeners dos botões de edição de forma correta e segura
+        // Configuração dos eventos de clique (seguro após carregamento)
         document.getElementById('display-budget-container').addEventListener('click', () => toggleBudgetEdit(true));
         document.getElementById('btn-save-budget').addEventListener('click', saveManualBudget);
         document.getElementById('btn-clear-budget').addEventListener('click', clearManualBudget);
@@ -613,7 +657,6 @@
         });
 
         function updateKPIs() {
-            // Se o utilizador ajustou o valor manualmente, usa-se esse, caso contrário, soma as linhas todas corretamente
             let orcadoAno = manualOrcadoAno !== null ? manualOrcadoAno : getCalculatedOrcadoAno();
             let realizadoAno = 0;
             let orcadoMes = 0, realizadoMes = 0;
@@ -746,7 +789,7 @@
         function getPieChartData() {
             const supplierMap = {};
             appData.forEach(item => {
-                let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal !== null && !isNaN(item.orcadoTotal)) 
+                let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal !== null && !isNaN(item.orcadoTotal) && item.orcadoTotal !== 0) 
                                       ? item.orcadoTotal 
                                       : item.orcado.reduce((a, b) => a + (b||0), 0);
                                       
