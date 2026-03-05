@@ -89,16 +89,16 @@
             <div>
                 <p class="text-sm font-medium text-slate-500 leading-tight mb-1">Budget Orçado de Infraestrutura <br/><span class="text-blue-600 font-bold">(Capex e Opex)</span></p>
                 
-                <div id="display-budget-container" class="flex items-center gap-2 group cursor-pointer" onclick="toggleBudgetEdit(true)" title="Clique para editar o orçamento anual">
+                <div id="display-budget-container" class="flex items-center gap-2 group cursor-pointer" title="Clique para editar o orçamento anual">
                     <p id="kpi-orcado-ano" class="text-2xl font-bold text-slate-900 transition-colors group-hover:text-blue-600">R$ 0,00</p>
                     <i class="fas fa-pencil-alt text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity"></i>
                 </div>
                 
                 <div id="edit-budget-container" class="hidden items-center gap-2 mt-1">
                     <span class="text-xl font-bold text-slate-900">R$</span>
-                    <input type="number" id="input-manual-budget" class="text-lg font-bold text-slate-900 bg-white border border-blue-500 rounded px-2 py-1 w-28 focus:outline-none focus:ring-2 focus:ring-blue-500" onkeydown="if(event.key === 'Enter') saveManualBudget()" />
-                    <button onclick="saveManualBudget()" class="bg-emerald-500 hover:bg-emerald-600 text-white w-8 h-8 rounded flex items-center justify-center transition-colors" title="Salvar valor"><i class="fas fa-check"></i></button>
-                    <button onclick="clearManualBudget()" class="bg-slate-200 hover:bg-slate-300 text-slate-600 w-8 h-8 rounded flex items-center justify-center transition-colors" title="Restaurar soma automática do Sheets"><i class="fas fa-undo"></i></button>
+                    <input type="number" id="input-manual-budget" class="text-lg font-bold text-slate-900 bg-white border border-blue-500 rounded px-2 py-1 w-28 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    <button id="btn-save-budget" class="bg-emerald-500 hover:bg-emerald-600 text-white w-8 h-8 rounded flex items-center justify-center transition-colors" title="Salvar valor"><i class="fas fa-check"></i></button>
+                    <button id="btn-clear-budget" class="bg-slate-200 hover:bg-slate-300 text-slate-600 w-8 h-8 rounded flex items-center justify-center transition-colors" title="Restaurar soma automática do Sheets"><i class="fas fa-undo"></i></button>
                 </div>
                 
                 <p class="text-xs text-slate-400 mt-1 font-medium" id="kpi-orcado-desc">Somatório do Orçado total <span class="lbl-ano-atual">2026</span></p>
@@ -275,11 +275,9 @@
         let unsubscribeSnap = null;
 
         // --- Template de Dados Base (Fallback) ---
-        // Este array servirá apenas caso não consiga sincronizar com a planilha inicialmente
         const templateData = [
             { id: 1, desc: 'Serviços em AWS', fornecedor: 'AWS', orcado: [221634, 225078, 228838, 242940, 246258, 249299, 258700, 258700, 258700, 258700, 344783, 285540], orcadoTotal: 3091870, realizado: Array(12).fill(0) },
             { id: 2, desc: 'Licenciamento Gsuite', fornecedor: 'Sauter', orcado: [36665, 36665, 36665, 48731, 48731, 48731, 48731, 48731, 48731, 48731, 48731, 48731], orcadoTotal: 535213, realizado: Array(12).fill(0) }
-            // O restante agora é carregado inteligentemente direto do Google Sheets!
         ];
 
         // --- Estado Global ---
@@ -307,7 +305,7 @@
             setTimeout(() => toast.classList.add('translate-x-[150%]'), 3000);
         }
 
-        // --- Lógica de Integração com Google Sheets (NOVO) ---
+        // --- Lógica de Integração com Google Sheets ---
         async function syncFromGoogleSheets() {
             try {
                 if (!confirm("Isso atualizará os valores do Budget Orçado diretamente com os dados atuais do Google Sheets. \n\nOs seus dados 'Realizados' (gastos lançados) NÃO serão perdidos. Deseja continuar?")) return;
@@ -315,29 +313,24 @@
                 document.getElementById('global-loader').style.display = 'flex';
                 document.querySelector('#global-loader p').innerText = 'Conectando ao Google Sheets...';
                 
-                // O ID da planilha que nos forneceu no link anterior
+                // O ID da planilha
                 const sheetId = '1TqDx9G3A_8U8VGmbqGe3YeoGTiQzGjftOz0P3s9cOO8';
-                
-                // Usando a API de Visualização do Google para extrair os dados formatados do Sheets
                 const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
                 
                 const response = await fetch(url);
                 const text = await response.text();
                 
-                // Limpeza do prefixo da API do Google para isolar o JSON
                 const jsonStr = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1);
                 const sheetData = JSON.parse(jsonStr);
                 
                 let newAppData = [];
                 let idCounter = 1;
 
-                // Função de conversão blindada para não falhar com formatações do Sheets (R$, espaços, pontos)
                 const parseSheetNumber = (cell) => {
                     if (!cell || cell.v === null || cell.v === undefined) return 0;
                     if (typeof cell.v === 'number') return cell.v;
                     const str = String(cell.v).trim();
                     if (str === '-' || str === '') return 0;
-                    // Limpa tudo que não seja número, vírgula ou sinal negativo
                     const cleanStr = str.replace(/[^\d,-]/g, '').replace(',', '.');
                     const num = parseFloat(cleanStr);
                     return isNaN(num) ? 0 : num;
@@ -345,30 +338,25 @@
                 
                 sheetData.table.rows.forEach((row, rowIndex) => {
                     const c = row.c;
-                    // Se a linha estiver vazia ou não tiver a primeira coluna, ignora
                     if (!c || !c[0] || !c[0].v) return;
                     
                     const desc = String(c[0].v).trim();
-                    // Ignorar o cabeçalho exato da planilha
-                    if (rowIndex === 0 || desc.toLowerCase() === 'descrição' || desc === '') return; 
+                    // Evita adicionar linhas de cabeçalho ou linhas de totais que duplicariam os valores
+                    if (rowIndex === 0 || desc.toLowerCase() === 'descrição' || desc === '' || desc.toLowerCase().includes('total')) return; 
                     
                     const fornecedor = (c[1] && c[1].v) ? String(c[1].v).trim() : 'Diversos';
                     
                     const orcado = [];
-                    // As colunas de Janeiro a Dezembro são as posições de índice 2 a 13 no Array
                     for (let i = 2; i <= 13; i++) {
                         orcado.push(parseSheetNumber(c[i]));
                     }
 
-                    // Coluna O (índice 14): Lê DIRETAMENTE a coluna "Orçado Total 2026" da planilha
                     let orcadoTotalSheet = parseSheetNumber(c[14]);
                     
-                    // Fallback de segurança: se a coluna 14 não for lida, soma os meses localmente
                     if (orcadoTotalSheet === 0) {
                         orcadoTotalSheet = orcado.reduce((a, b) => a + b, 0);
                     }
                     
-                    // IMPORTANTE: Mantém os valores "Realizados" que já estejam salvos no Firebase
                     let realizado = Array(12).fill(0);
                     const existingItem = appData.find(item => item.desc === desc);
                     if (existingItem) {
@@ -380,7 +368,7 @@
                         desc: desc,
                         fornecedor: fornecedor,
                         orcado: orcado,
-                        orcadoTotal: orcadoTotalSheet, // Guarda com exatidão o número da Coluna O
+                        orcadoTotal: orcadoTotalSheet,
                         realizado: realizado
                     });
                 });
@@ -498,7 +486,7 @@
                 }
                 btn.onclick = () => {
                     selectedMonth = idx;
-                    updateUI(); // Refaz a view da tabela e resumos
+                    updateUI(); 
                 };
                 container.appendChild(btn);
             });
@@ -540,14 +528,12 @@
                 tbody.appendChild(tr);
             });
 
-            // Lidar com a edição manual nas inputs
             document.querySelectorAll('.input-realizado').forEach(input => {
                 input.addEventListener('input', (e) => {
                     const idx = e.target.getAttribute('data-index');
                     const numValue = parseFloat(e.target.value) || 0;
                     appData[idx].realizado[selectedMonth] = numValue;
                     
-                    // Atualiza a célula de status na mesma linha
                     const item = appData[idx];
                     const statusCell = document.getElementById(`status-${item.id}`);
                     statusCell.innerHTML = getStatusHTML(item.orcado[selectedMonth], numValue);
@@ -573,14 +559,14 @@
         // --- Lógica de Edição Manual do Budget Anual ---
         function getCalculatedOrcadoAno() {
             return appData.reduce((acc, item) => {
-                let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal > 0) 
+                let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal !== null && !isNaN(item.orcadoTotal)) 
                                       ? item.orcadoTotal 
                                       : item.orcado.reduce((a, b) => a + (b||0), 0);
                 return acc + orcadoItemTotal;
             }, 0);
         }
 
-        window.toggleBudgetEdit = function(show) {
+        function toggleBudgetEdit(show) {
             const displayCont = document.getElementById('display-budget-container');
             const editCont = document.getElementById('edit-budget-container');
             
@@ -599,26 +585,35 @@
                 displayCont.classList.remove('hidden');
                 displayCont.classList.add('flex');
             }
-        };
+        }
 
-        window.saveManualBudget = function() {
+        function saveManualBudget() {
             const val = parseFloat(document.getElementById('input-manual-budget').value);
             if(!isNaN(val)) {
                 manualOrcadoAno = val;
                 updateKPIs();
                 saveDataToCloud();
             }
-            window.toggleBudgetEdit(false);
-        };
+            toggleBudgetEdit(false);
+        }
 
-        window.clearManualBudget = function() {
+        function clearManualBudget() {
             manualOrcadoAno = null;
             updateKPIs();
             saveDataToCloud();
-            window.toggleBudgetEdit(false);
-        };
+            toggleBudgetEdit(false);
+        }
+
+        // Conectar os Event Listeners dos botões de edição de forma correta e segura
+        document.getElementById('display-budget-container').addEventListener('click', () => toggleBudgetEdit(true));
+        document.getElementById('btn-save-budget').addEventListener('click', saveManualBudget);
+        document.getElementById('btn-clear-budget').addEventListener('click', clearManualBudget);
+        document.getElementById('input-manual-budget').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') saveManualBudget();
+        });
 
         function updateKPIs() {
+            // Se o utilizador ajustou o valor manualmente, usa-se esse, caso contrário, soma as linhas todas corretamente
             let orcadoAno = manualOrcadoAno !== null ? manualOrcadoAno : getCalculatedOrcadoAno();
             let realizadoAno = 0;
             let orcadoMes = 0, realizadoMes = 0;
@@ -751,7 +746,7 @@
         function getPieChartData() {
             const supplierMap = {};
             appData.forEach(item => {
-                let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal > 0) 
+                let orcadoItemTotal = (item.orcadoTotal !== undefined && item.orcadoTotal !== null && !isNaN(item.orcadoTotal)) 
                                       ? item.orcadoTotal 
                                       : item.orcado.reduce((a, b) => a + (b||0), 0);
                                       
@@ -796,7 +791,6 @@
 
         function openUploadModal() {
             modal.classList.remove('hidden');
-            // Reset modal state
             fileInput.value = '';
             processIndicator.classList.add('hidden');
             uploadForm.classList.add('opacity-50', 'pointer-events-none');
@@ -809,20 +803,17 @@
             modal.classList.add('hidden');
         }
 
-        // Simula Leitura de OCR do ficheiro
         fileInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
                 processIndicator.classList.remove('hidden');
                 
-                // Simula 1.5s de processamento IA / OCR
                 setTimeout(() => {
                     processIndicator.classList.add('hidden');
                     uploadForm.classList.remove('opacity-50', 'pointer-events-none');
                     btnConfirmUpload.disabled = false;
                     
-                    // Gera dados simulados da fatura para demonstração
                     const today = new Date();
-                    today.setMonth(selectedMonth); // Coloca o mês no mês em exibição para ser fácil de ver
+                    today.setMonth(selectedMonth); 
                     
                     dateInput.value = today.toISOString().split('T')[0];
                     valueInput.value = (Math.random() * 5000 + 100).toFixed(2);
@@ -831,7 +822,6 @@
             }
         });
 
-        // Guardar a Fatura no Painel
         btnConfirmUpload.addEventListener('click', async () => {
             const selectedLineId = parseInt(lineSelect.value);
             const invoiceDate = new Date(dateInput.value);
@@ -839,27 +829,23 @@
 
             if (isNaN(invoiceValue) || isNaN(invoiceDate.getTime())) return;
 
-            const invoiceMonth = invoiceDate.getMonth(); // 0 a 11
+            const invoiceMonth = invoiceDate.getMonth();
             const invoiceYear = invoiceDate.getFullYear().toString();
 
-            // Se o utilizador inserir uma fatura de um ano diferente, alertamos e forçamos a troca
             if (invoiceYear !== currentYear) {
                 if (confirm(`A data da fatura pertence ao ano ${invoiceYear}. Deseja mudar de painel e alocar lá o valor?`)) {
                     currentYear = invoiceYear;
                     document.getElementById('year-select').value = currentYear;
                     await loadYearData(currentYear);
                 } else {
-                    return; // Cancela operação se o utilizador não quiser mudar de ano
+                    return; 
                 }
             }
 
-            // Encontrar o item correspondente e aplicar o valor do gasto
             const itemIndex = appData.findIndex(item => item.id === selectedLineId);
             if (itemIndex > -1) {
-                // Adiciona o valor da nota fiscal ao mês correspondente (permite acumular facturas do mesmo mês)
                 appData[itemIndex].realizado[invoiceMonth] += invoiceValue;
                 
-                // Navegar automaticamente para o mês da fatura para o utilizador ver a mudança
                 selectedMonth = invoiceMonth;
                 
                 await saveDataToCloud();
@@ -884,7 +870,6 @@
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 currentUser = user;
-                // Apenas se ainda não tivemos carregado, tentamos sincronizar a partir do Firebase ou do Sheet
                 await loadYearData(currentYear);
             }
         });
