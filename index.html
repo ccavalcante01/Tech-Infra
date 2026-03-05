@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel de Budget IT</title>
+    
+    <!-- Tailwind CSS para Estilização -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Chart.js para os Gráficos -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- FontAwesome para Ícones -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        /* Ocultar as setas do input number */
+        input[type=number]::-webkit-inner-spin-button, 
+        input[type=number]::-webkit-outer-spin-button { 
+            -webkit-appearance: none; 
+            margin: 0; 
+        }
+        input[type=number] {
+            -moz-appearance: textfield;
+        }
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen p-4 md:p-8">
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed top-4 right-4 bg-emerald-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 z-50 transform transition-transform duration-300 translate-x-[150%]">
+        <i class="fas fa-check-circle text-xl"></i>
+        <span id="toast-msg" class="font-medium">Mensagem guardada</span>
+    </div>
+
+    <!-- Indicador de Carregamento Global -->
+    <div id="global-loader" class="fixed inset-0 bg-white/80 z-[100] flex flex-col items-center justify-center">
+        <div class="loader !w-12 !h-12 !border-4 mb-4"></div>
+        <p class="text-slate-600 font-medium">A sincronizar com a base de dados...</p>
+    </div>
+
+    <!-- Cabeçalho -->
+    <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8 gap-4">
+        <div>
+            <div class="flex items-center gap-4">
+                <h1 class="text-3xl font-bold text-slate-900 tracking-tight">Painel de Budget IT</h1>
+                <!-- Seletor de Ano -->
+                <select id="year-select" class="bg-white border border-slate-300 text-slate-700 font-bold rounded-lg px-3 py-1.5 focus:ring-blue-500 focus:border-blue-500 shadow-sm cursor-pointer">
+                    <option value="2024">2024</option>
+                    <option value="2025">2025</option>
+                    <option value="2026" selected>2026</option>
+                    <option value="2027">2027</option>
+                </select>
+            </div>
+            <p class="text-slate-500 mt-1">Acompanhamento e controle financeiro de infraestrutura</p>
+        </div>
+        <div class="flex flex-wrap gap-3 w-full lg:w-auto">
+            <button id="btn-sync-sheets" class="flex-1 lg:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium transition-colors shadow-sm">
+                <i class="fas fa-sync"></i> Sincronizar Planilha
+            </button>
+            <button id="btn-upload" class="flex-1 lg:flex-none bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium transition-colors shadow-sm">
+                <i class="fas fa-file-invoice"></i> Carregar NF
+            </button>
+            <button id="btn-save" class="flex-1 lg:flex-none bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg flex items-center justify-center gap-2 font-medium transition-colors shadow-sm">
+                <i class="fas fa-save"></i> Guardar Alterações
+            </button>
+        </div>
+    </div>
+
+    <!-- Cartões de KPI - Ano -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex items-center gap-4">
+            <div class="p-4 bg-blue-50 text-blue-600 rounded-xl">
+                <i class="fas fa-bullseye text-2xl"></i>
+            </div>
+            <div>
+                <p class="text-sm font-medium text-slate-500 leading-tight mb-1">Budget Orçado de Infraestrutura <br/><span class="text-blue-600 font-bold">(Capex e Opex)</span></p>
+                <p id="kpi-orcado-ano" class="text-2xl font-bold text-slate-900">R$ 0,00</p>
+                <p class="text-xs text-slate-400 mt-1 font-medium">Somatório do Orçado total <span class="lbl-ano-atual">2026</span></p>
+            </div>
+        </div>
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex items-center gap-4">
+            <div class="p-4 bg-indigo-50 text-indigo-600 rounded-xl">
+                <i class="fas fa-wallet text-2xl"></i>
+            </div>
+            <div>
+                <p class="text-sm font-medium text-slate-500">Total Realizado (YTD)</p>
+                <p id="kpi-realizado-ano" class="text-2xl font-bold text-slate-900">R$ 0,00</p>
+            </div>
+        </div>
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex items-center gap-4">
+            <div id="kpi-icon-economia" class="p-4 rounded-xl bg-emerald-50 text-emerald-600">
+                <i id="kpi-arrow-economia" class="fas fa-arrow-trend-down text-2xl"></i>
+            </div>
+            <div>
+                <p class="text-sm font-medium text-slate-500">Saldo Atual (Economia)</p>
+                <p id="kpi-economia-ano" class="text-2xl font-bold text-emerald-600">R$ 0,00</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Secção de Gráficos -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <!-- Gráfico de Barras Mensal -->
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 lg:col-span-2">
+            <h2 class="text-lg font-semibold text-slate-800 mb-6 flex items-center gap-2">
+                <i class="far fa-calendar-alt text-blue-500"></i> Visão Mensal: Orçado vs Realizado
+            </h2>
+            <div class="relative h-72 w-full">
+                <canvas id="barChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Gráfico de Pizza (Fornecedores) -->
+        <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+            <h2 class="text-lg font-semibold text-slate-800 mb-6 flex items-center gap-2">
+                <i class="fas fa-dollar-sign text-emerald-500"></i> Distribuição (Top Fornecedores)
+            </h2>
+            <div class="relative h-72 w-full flex justify-center">
+                <canvas id="pieChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Controlos de Mês para a Tabela Editável -->
+    <div class="bg-white rounded-t-2xl p-6 shadow-sm border-x border-t border-slate-200 mt-4">
+        <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6">
+            <h2 class="text-xl font-bold text-slate-800">Controle de Gastos por Mês</h2>
+            <div id="month-buttons" class="flex flex-wrap justify-center gap-2">
+                <!-- Botões gerados via JS -->
+            </div>
+        </div>
+
+        <!-- Resumo do Mês Selecionado -->
+        <div class="flex flex-wrap gap-4 mb-6 p-4 bg-slate-50 rounded-xl border border-slate-100">
+            <div class="flex-1 min-w-[150px]">
+                <p class="text-xs text-slate-500 uppercase font-semibold">Budget <span id="lbl-month-orcado">Jan</span></p>
+                <p id="kpi-orcado-mes" class="text-xl font-bold text-blue-600">R$ 0,00</p>
+            </div>
+            <div class="flex-1 min-w-[150px]">
+                <p class="text-xs text-slate-500 uppercase font-semibold">Gasto <span id="lbl-month-realizado">Jan</span></p>
+                <p id="kpi-realizado-mes" class="text-xl font-bold text-indigo-600">R$ 0,00</p>
+            </div>
+            <div class="flex-1 min-w-[150px]">
+                <p class="text-xs text-slate-500 uppercase font-semibold">Diferença</p>
+                <p id="kpi-economia-mes" class="text-xl font-bold text-emerald-600 flex items-center gap-1">+ R$ 0,00</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabela Editável -->
+    <div class="bg-white rounded-b-2xl shadow-sm border border-slate-200 overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+            <thead>
+                <tr class="bg-slate-50 border-b border-slate-200 text-slate-600 text-sm">
+                    <th class="p-4 font-semibold">Descrição do Serviço / Contrato</th>
+                    <th class="p-4 font-semibold">Fornecedor</th>
+                    <th class="p-4 font-semibold text-right">Orçado (Budget)</th>
+                    <th class="p-4 font-semibold text-right min-w-[180px]">Realizado (Gasto) ✎</th>
+                    <th class="p-4 font-semibold text-right">Status / Desvio</th>
+                </tr>
+            </thead>
+            <tbody id="table-body">
+                <!-- Linhas geradas via JS -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Modal: Carregar Fatura / Nota Fiscal -->
+    <div id="upload-modal" class="fixed inset-0 bg-slate-900/60 z-50 hidden flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col">
+            <div class="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                <h3 class="text-xl font-bold text-slate-800 flex items-center gap-2">
+                    <i class="fas fa-file-invoice text-indigo-600"></i> Importar Nota Fiscal Automática
+                </h3>
+                <button id="btn-close-modal" class="text-slate-400 hover:text-slate-600 transition-colors">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 space-y-5">
+                <p class="text-sm text-slate-500">Carregue a nota fiscal para extração automática (OCR). O sistema irá alocar o valor no mês correspondente à data do documento.</p>
+                
+                <!-- Ficheiro -->
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-1">Documento (PDF, XML, Imagem)</label>
+                    <input type="file" id="upload-file-input" accept=".pdf,.xml,.jpg,.png" class="block w-full text-sm text-slate-500 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer border border-slate-300 rounded-lg">
+                </div>
+
+                <!-- Simulação de Processamento -->
+                <div id="upload-processing" class="hidden flex items-center gap-3 text-indigo-600 bg-indigo-50 p-3 rounded-lg border border-indigo-100">
+                    <div class="loader"></div>
+                    <span class="text-sm font-medium">Analisando documento através de IA...</span>
+                </div>
+
+                <!-- Formulário Extraído (Inicialmente Oculto ou Desativado) -->
+                <div id="upload-form" class="space-y-4 opacity-50 pointer-events-none transition-opacity duration-300">
+                    <div>
+                        <label class="block text-sm font-semibold text-slate-700 mb-1">Linha de Orçamento Associada</label>
+                        <select id="upload-line-select" class="w-full bg-white border border-slate-300 text-slate-700 rounded-lg px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500">
+                            <!-- Preenchido via JS -->
+                        </select>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-700 mb-1">Data da Nota Fiscal</label>
+                            <input type="date" id="upload-date" class="w-full bg-white border border-slate-300 text-slate-700 rounded-lg px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-slate-700 mb-1">Valor Extraído (R$)</label>
+                            <input type="number" id="upload-value" step="0.01" class="w-full bg-white border border-slate-300 text-slate-700 rounded-lg px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-6 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
+                <button id="btn-cancel-modal" class="px-5 py-2.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-200 transition-colors">Cancelar</button>
+                <button id="btn-confirm-upload" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    <i class="fas fa-check"></i> Importar Valor
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Módulo Firebase e Lógica da App -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Configurações Firebase ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyDWNcOC70toMBh-cnm5dvuEUbneU_xLP7I",
+            authDomain: "budget-controle-47f94.firebaseapp.com",
+            projectId: "budget-controle-47f94",
+            storageBucket: "budget-controle-47f94.firebasestorage.app",
+            messagingSenderId: "492663950474",
+            appId: "1:492663950474:web:37f0a7c952fd0531c67173",
+            measurementId: "G-VJ63EP59XW"
+        };
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = "budget-controle-47f94"; // Identificador fixo para o seu projeto
+        let currentUser = null;
+        let unsubscribeSnap = null;
+
+        // --- Template de Dados Base (Fallback) ---
+        // Este array servirá apenas caso não consiga sincronizar com a planilha inicialmente
+        const templateData = [
+            { id: 1, desc: 'Serviços em AWS', fornecedor: 'AWS', orcado: [221634, 225078, 228838, 242940, 246258, 249299, 258700, 258700, 258700, 258700, 344783, 285540], realizado: Array(12).fill(0) },
+            { id: 2, desc: 'Licenciamento Gsuite', fornecedor: 'Sauter', orcado: [36665, 36665, 36665, 48731, 48731, 48731, 48731, 48731, 48731, 48731, 48731, 48731], realizado: Array(12).fill(0) }
+            // O restante agora é carregado inteligentemente direto do Google Sheets!
+        ];
+
+        // --- Estado Global ---
+        const MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+        let currentYear = "2026";
+        let selectedMonth = 0; 
+        let appData = []; // Dados reativos para o ano selecionado
+        let myBarChart = null;
+        let myPieChart = null;
+
+        // --- Funções de Formatação ---
+        function formatCurrency(value) {
+            return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+        }
+
+        function formatCurrencyShort(value) {
+            return `R$ ${(value / 1000).toFixed(0)}k`;
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-msg').innerText = msg;
+            toast.classList.remove('translate-x-[150%]');
+            setTimeout(() => toast.classList.add('translate-x-[150%]'), 3000);
+        }
+
+        // --- Lógica de Integração com Google Sheets (NOVO) ---
+        async function syncFromGoogleSheets() {
+            try {
+                if (!confirm("Isso atualizará os valores do Budget Orçado diretamente com os dados atuais do Google Sheets. \n\nOs seus dados 'Realizados' (gastos lançados) NÃO serão perdidos. Deseja continuar?")) return;
+                
+                document.getElementById('global-loader').style.display = 'flex';
+                document.querySelector('#global-loader p').innerText = 'Conectando ao Google Sheets...';
+                
+                // O ID da planilha que nos forneceu no link anterior
+                const sheetId = '1TqDx9G3A_8U8VGmbqGe3YeoGTiQzGjftOz0P3s9cOO8';
+                
+                // Usando a API de Visualização do Google para extrair os dados formatados do Sheets
+                const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json`;
+                
+                const response = await fetch(url);
+                const text = await response.text();
+                
+                // Limpeza do prefixo da API do Google para isolar o JSON
+                const jsonStr = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1);
+                const sheetData = JSON.parse(jsonStr);
+                
+                let newAppData = [];
+                let idCounter = 1;
+                
+                sheetData.table.rows.forEach((row) => {
+                    const c = row.c;
+                    // Se a linha estiver vazia ou não tiver a primeira coluna, ignora
+                    if (!c || !c[0] || !c[0].v) return;
+                    
+                    const desc = String(c[0].v).trim();
+                    // Ignorar o cabeçalho da planilha
+                    if (desc.toLowerCase().includes('descrição') || desc.toLowerCase().includes('budget') || desc === '') return; 
+                    
+                    const fornecedor = (c[1] && c[1].v) ? String(c[1].v).trim() : 'Diversos';
+                    
+                    const orcado = [];
+                    // As colunas de Janeiro a Dezembro são as posições de índice 2 a 13 no Array
+                    for (let i = 2; i <= 13; i++) {
+                        let val = 0;
+                        if (c[i] && c[i].v !== null) {
+                            // Converte de maneira robusta, limpando símbolos de Reais e pontos
+                            val = typeof c[i].v === 'number' ? c[i].v : parseFloat(String(c[i].v).replace(/[^\d,-]/g, '').replace(',', '.'));
+                        }
+                        orcado.push(isNaN(val) ? 0 : val);
+                    }
+                    
+                    // IMPORTANTE: Mantém os valores "Realizados" que já estejam salvos no Firebase
+                    let realizado = Array(12).fill(0);
+                    const existingItem = appData.find(item => item.desc === desc);
+                    if (existingItem) {
+                        realizado = existingItem.realizado;
+                    }
+                    
+                    newAppData.push({
+                        id: idCounter++,
+                        desc: desc,
+                        fornecedor: fornecedor,
+                        orcado: orcado,
+                        realizado: realizado
+                    });
+                });
+                
+                if (newAppData.length > 0) {
+                    appData = newAppData;
+                    await saveDataToCloud();
+                    updateUI();
+                    showToast('Linhas e Valores sincronizados com sucesso a partir do Sheets!');
+                } else {
+                    alert('Nenhuma linha de orçamento válida foi encontrada na planilha.');
+                }
+            } catch (error) {
+                console.error('Erro na sincronização:', error);
+                alert('Falha ao aceder ao Google Sheets. Certifique-se de que o link da planilha continua "Público para Leitura".');
+            } finally {
+                document.getElementById('global-loader').style.display = 'none';
+                document.querySelector('#global-loader p').innerText = 'A sincronizar com a base de dados...';
+            }
+        }
+
+        // --- Lógica da Base de Dados (Firestore) ---
+        async function initAuth() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Erro na autenticação:", error);
+                document.getElementById('global-loader').style.display = 'none';
+            }
+        }
+
+        function getCollectionRef() {
+            return collection(db, 'artifacts', appId, 'users', currentUser.uid, 'budgets_anuais');
+        }
+
+        async function loadYearData(year) {
+            if (!currentUser) return;
+            
+            document.getElementById('global-loader').style.display = 'flex';
+            
+            if (unsubscribeSnap) {
+                unsubscribeSnap();
+            }
+
+            const docRef = doc(getCollectionRef(), year);
+            const docSnap = await getDoc(docRef);
+            
+            if (!docSnap.exists()) {
+                const initialSeed = JSON.parse(JSON.stringify(templateData));
+                await setDoc(docRef, { year: year, data: initialSeed });
+                appData = initialSeed;
+            } else {
+                appData = docSnap.data().data;
+            }
+
+            unsubscribeSnap = onSnapshot(docRef, (snapshot) => {
+                if (snapshot.exists()) {
+                    appData = snapshot.data().data;
+                    updateUI();
+                    document.getElementById('global-loader').style.display = 'none';
+                }
+            }, (error) => {
+                console.error("Erro no onSnapshot:", error);
+                document.getElementById('global-loader').style.display = 'none';
+            });
+        }
+
+        async function saveDataToCloud() {
+            if (!currentUser) return;
+            try {
+                document.getElementById('global-loader').style.display = 'flex';
+                const docRef = doc(getCollectionRef(), currentYear);
+                await setDoc(docRef, { year: currentYear, data: appData }, { merge: true });
+                document.getElementById('global-loader').style.display = 'none';
+                showToast('Alterações guardadas com sucesso no Firebase!');
+            } catch (error) {
+                console.error("Erro ao guardar dados:", error);
+                alert("Ocorreu um erro ao tentar guardar as suas alterações.");
+                document.getElementById('global-loader').style.display = 'none';
+            }
+        }
+
+        // --- Atualização da Interface (UI) ---
+        function updateUI() {
+            document.querySelectorAll('.lbl-ano-atual').forEach(el => el.innerText = currentYear);
+            renderMonthButtons();
+            populateUploadDropdown();
+            updateKPIs();
+            renderTable();
+            if (!myBarChart) {
+                initCharts();
+            } else {
+                updateCharts();
+            }
+        }
+
+        function renderMonthButtons() {
+            const container = document.getElementById('month-buttons');
+            container.innerHTML = '';
+            
+            MONTHS.forEach((month, idx) => {
+                const btn = document.createElement('button');
+                btn.innerText = month;
+                if (idx === selectedMonth) {
+                    btn.className = 'px-4 py-2 rounded-lg text-sm font-medium transition-all bg-blue-600 text-white shadow-md';
+                } else {
+                    btn.className = 'px-4 py-2 rounded-lg text-sm font-medium transition-all bg-slate-100 text-slate-600 hover:bg-slate-200';
+                }
+                btn.onclick = () => {
+                    selectedMonth = idx;
+                    updateUI(); // Refaz a view da tabela e resumos
+                };
+                container.appendChild(btn);
+            });
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = '';
+
+            appData.forEach((item, index) => {
+                const valOrcado = item.orcado[selectedMonth] || 0;
+                const valRealizado = item.realizado[selectedMonth] || 0;
+                
+                const tr = document.createElement('tr');
+                tr.className = "border-b border-slate-100 hover:bg-slate-50 transition-colors";
+                
+                tr.innerHTML = `
+                    <td class="p-4 font-medium text-slate-800">${item.desc}</td>
+                    <td class="p-4 text-slate-500">
+                        <span class="bg-slate-100 px-2 py-1 rounded text-xs font-medium">${item.fornecedor}</span>
+                    </td>
+                    <td class="p-4 text-right text-slate-600 font-medium">${formatCurrency(valOrcado)}</td>
+                    <td class="p-4 text-right">
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">R$</span>
+                            <input 
+                                type="number" 
+                                value="${valRealizado > 0 ? valRealizado : ''}" 
+                                placeholder="0.00"
+                                data-index="${index}"
+                                class="input-realizado w-full text-right bg-white border border-slate-300 rounded-lg py-2 pl-8 pr-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium text-slate-800 transition-all"
+                            />
+                        </div>
+                    </td>
+                    <td class="p-4 text-right" id="status-${item.id}">
+                        ${getStatusHTML(valOrcado, valRealizado)}
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Lidar com a edição manual nas inputs
+            document.querySelectorAll('.input-realizado').forEach(input => {
+                input.addEventListener('input', (e) => {
+                    const idx = e.target.getAttribute('data-index');
+                    const numValue = parseFloat(e.target.value) || 0;
+                    appData[idx].realizado[selectedMonth] = numValue;
+                    
+                    // Atualiza a célula de status na mesma linha
+                    const item = appData[idx];
+                    const statusCell = document.getElementById(`status-${item.id}`);
+                    statusCell.innerHTML = getStatusHTML(item.orcado[selectedMonth], numValue);
+                    
+                    updateKPIs();
+                    updateCharts();
+                });
+            });
+        }
+
+        function getStatusHTML(orcado, realizado) {
+            if (realizado > 0) {
+                const desvio = orcado - realizado;
+                if (desvio >= 0) {
+                    return `<span class="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-sm font-semibold"><i class="fas fa-check-circle"></i> ${formatCurrency(Math.abs(desvio))}</span>`;
+                } else {
+                    return `<span class="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-semibold"><i class="fas fa-exclamation-circle"></i> ${formatCurrency(Math.abs(desvio))}</span>`;
+                }
+            }
+            return `<span class="text-slate-400 text-sm italic">Pendente</span>`;
+        }
+
+        function updateKPIs() {
+            let orcadoAno = 0, realizadoAno = 0;
+            let orcadoMes = 0, realizadoMes = 0;
+
+            appData.forEach(item => {
+                orcadoAno += item.orcado.reduce((a, b) => a + (b||0), 0);
+                realizadoAno += item.realizado.reduce((a, b) => a + (b||0), 0);
+                orcadoMes += item.orcado[selectedMonth] || 0;
+                realizadoMes += item.realizado[selectedMonth] || 0;
+            });
+
+            const economiaAno = orcadoAno - realizadoAno;
+            const economiaMes = orcadoMes - realizadoMes;
+
+            document.getElementById('kpi-orcado-ano').innerText = formatCurrency(orcadoAno);
+            document.getElementById('kpi-realizado-ano').innerText = formatCurrency(realizadoAno);
+            
+            const kpiEconAnoEl = document.getElementById('kpi-economia-ano');
+            const iconBg = document.getElementById('kpi-icon-economia');
+            const iconArrow = document.getElementById('kpi-arrow-economia');
+            
+            kpiEconAnoEl.innerText = formatCurrency(Math.abs(economiaAno));
+            if (economiaAno >= 0) {
+                kpiEconAnoEl.className = 'text-2xl font-bold text-emerald-600';
+                iconBg.className = 'p-4 rounded-xl bg-emerald-50 text-emerald-600';
+                iconArrow.className = 'fas fa-arrow-trend-down text-2xl';
+                kpiEconAnoEl.innerText = '+ ' + formatCurrency(economiaAno);
+            } else {
+                kpiEconAnoEl.className = 'text-2xl font-bold text-red-600';
+                iconBg.className = 'p-4 rounded-xl bg-red-50 text-red-600';
+                iconArrow.className = 'fas fa-arrow-trend-up text-2xl';
+                kpiEconAnoEl.innerText = '- ' + formatCurrency(Math.abs(economiaAno));
+            }
+
+            document.getElementById('lbl-month-orcado').innerText = MONTHS[selectedMonth];
+            document.getElementById('lbl-month-realizado').innerText = MONTHS[selectedMonth];
+            document.getElementById('kpi-orcado-mes').innerText = formatCurrency(orcadoMes);
+            document.getElementById('kpi-realizado-mes').innerText = formatCurrency(realizadoMes);
+            
+            const kpiEconMesEl = document.getElementById('kpi-economia-mes');
+            if (economiaMes >= 0) {
+                kpiEconMesEl.className = 'text-xl font-bold text-emerald-600 flex items-center gap-1';
+                kpiEconMesEl.innerHTML = `<i class="fas fa-plus"></i> ${formatCurrency(Math.abs(economiaMes))}`;
+            } else {
+                kpiEconMesEl.className = 'text-xl font-bold text-red-600 flex items-center gap-1';
+                kpiEconMesEl.innerHTML = `<i class="fas fa-minus"></i> ${formatCurrency(Math.abs(economiaMes))}`;
+            }
+        }
+
+        // --- Gráficos (Chart.js) ---
+        function initCharts() {
+            const ctxBar = document.getElementById('barChart').getContext('2d');
+            const ctxPie = document.getElementById('pieChart').getContext('2d');
+
+            Chart.defaults.font.family = "'Inter', 'sans-serif'";
+            Chart.defaults.color = '#64748b';
+
+            myBarChart = new Chart(ctxBar, {
+                type: 'bar',
+                data: getBarChartData(),
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom', labels: { usePointStyle: true, padding: 20 } },
+                        tooltip: { callbacks: { label: (context) => formatCurrency(context.raw) } }
+                    },
+                    scales: {
+                        y: { 
+                            beginAtZero: true, 
+                            border: { display: false },
+                            grid: { color: '#e2e8f0', drawTicks: false },
+                            ticks: { callback: (val) => formatCurrencyShort(val) }
+                        },
+                        x: { border: { display: false }, grid: { display: false } }
+                    }
+                }
+            });
+
+            myPieChart = new Chart(ctxPie, {
+                type: 'doughnut',
+                data: getPieChartData(),
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '65%',
+                    plugins: {
+                        legend: { position: 'right', labels: { usePointStyle: true } },
+                        tooltip: { callbacks: { label: (context) => ` ${context.label}: ${formatCurrency(context.raw)}` } }
+                    }
+                }
+            });
+        }
+
+        function updateCharts() {
+            if (myBarChart) {
+                myBarChart.data = getBarChartData();
+                myBarChart.update();
+            }
+            if (myPieChart) {
+                myPieChart.data = getPieChartData();
+                myPieChart.update();
+            }
+        }
+
+        function getBarChartData() {
+            const orcadoData = MONTHS.map((_, i) => appData.reduce((acc, item) => acc + (item.orcado[i]||0), 0));
+            const realizadoData = MONTHS.map((_, i) => appData.reduce((acc, item) => acc + (item.realizado[i]||0), 0));
+
+            return {
+                labels: MONTHS,
+                datasets: [
+                    { label: 'Orçamentado', data: orcadoData, backgroundColor: '#3b82f6', borderRadius: 4, barPercentage: 0.6 },
+                    { label: 'Realizado', data: realizadoData, backgroundColor: '#6366f1', borderRadius: 4, barPercentage: 0.6 }
+                ]
+            };
+        }
+
+        function getPieChartData() {
+            const supplierMap = {};
+            appData.forEach(item => {
+                const orcadoTotal = item.orcado.reduce((a, b) => a + (b||0), 0);
+                if (supplierMap[item.fornecedor]) supplierMap[item.fornecedor] += orcadoTotal;
+                else supplierMap[item.fornecedor] = orcadoTotal;
+            });
+
+            const sorted = Object.entries(supplierMap).sort((a, b) => b[1] - a[1]);
+            const top5 = sorted.slice(0, 5);
+            const others = sorted.slice(5).reduce((acc, curr) => acc + curr[1], 0);
+            if (others > 0) top5.push(['Outros', others]);
+
+            return {
+                labels: top5.map(arr => arr[0]),
+                datasets: [{
+                    data: top5.map(arr => arr[1]),
+                    backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'],
+                    borderWidth: 0, hoverOffset: 4
+                }]
+            };
+        }
+
+        // --- Lógica de Upload de Fatura (Modal) ---
+        const modal = document.getElementById('upload-modal');
+        const fileInput = document.getElementById('upload-file-input');
+        const processIndicator = document.getElementById('upload-processing');
+        const uploadForm = document.getElementById('upload-form');
+        const btnConfirmUpload = document.getElementById('btn-confirm-upload');
+        const dateInput = document.getElementById('upload-date');
+        const valueInput = document.getElementById('upload-value');
+        const lineSelect = document.getElementById('upload-line-select');
+
+        function populateUploadDropdown() {
+            lineSelect.innerHTML = '';
+            appData.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.id;
+                opt.text = `${item.desc} (${item.fornecedor})`;
+                lineSelect.appendChild(opt);
+            });
+        }
+
+        function openUploadModal() {
+            modal.classList.remove('hidden');
+            // Reset modal state
+            fileInput.value = '';
+            processIndicator.classList.add('hidden');
+            uploadForm.classList.add('opacity-50', 'pointer-events-none');
+            btnConfirmUpload.disabled = true;
+            dateInput.value = '';
+            valueInput.value = '';
+        }
+
+        function closeUploadModal() {
+            modal.classList.add('hidden');
+        }
+
+        // Simula Leitura de OCR do ficheiro
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                processIndicator.classList.remove('hidden');
+                
+                // Simula 1.5s de processamento IA / OCR
+                setTimeout(() => {
+                    processIndicator.classList.add('hidden');
+                    uploadForm.classList.remove('opacity-50', 'pointer-events-none');
+                    btnConfirmUpload.disabled = false;
+                    
+                    // Gera dados simulados da fatura para demonstração
+                    const today = new Date();
+                    today.setMonth(selectedMonth); // Coloca o mês no mês em exibição para ser fácil de ver
+                    
+                    dateInput.value = today.toISOString().split('T')[0];
+                    valueInput.value = (Math.random() * 5000 + 100).toFixed(2);
+                    
+                }, 1500);
+            }
+        });
+
+        // Guardar a Fatura no Painel
+        btnConfirmUpload.addEventListener('click', async () => {
+            const selectedLineId = parseInt(lineSelect.value);
+            const invoiceDate = new Date(dateInput.value);
+            const invoiceValue = parseFloat(valueInput.value);
+
+            if (isNaN(invoiceValue) || isNaN(invoiceDate.getTime())) return;
+
+            const invoiceMonth = invoiceDate.getMonth(); // 0 a 11
+            const invoiceYear = invoiceDate.getFullYear().toString();
+
+            // Se o utilizador inserir uma fatura de um ano diferente, alertamos e forçamos a troca
+            if (invoiceYear !== currentYear) {
+                if (confirm(`A data da fatura pertence ao ano ${invoiceYear}. Deseja mudar de painel e alocar lá o valor?`)) {
+                    currentYear = invoiceYear;
+                    document.getElementById('year-select').value = currentYear;
+                    await loadYearData(currentYear);
+                } else {
+                    return; // Cancela operação se o utilizador não quiser mudar de ano
+                }
+            }
+
+            // Encontrar o item correspondente e aplicar o valor do gasto
+            const itemIndex = appData.findIndex(item => item.id === selectedLineId);
+            if (itemIndex > -1) {
+                // Adiciona o valor da nota fiscal ao mês correspondente (permite acumular facturas do mesmo mês)
+                appData[itemIndex].realizado[invoiceMonth] += invoiceValue;
+                
+                // Navegar automaticamente para o mês da fatura para o utilizador ver a mudança
+                selectedMonth = invoiceMonth;
+                
+                await saveDataToCloud();
+                updateUI();
+                closeUploadModal();
+                showToast(`Nota Fiscal no valor de ${formatCurrency(invoiceValue)} foi alocada em ${MONTHS[invoiceMonth]}/${invoiceYear}!`);
+            }
+        });
+
+        // --- Event Listeners Globais ---
+        document.getElementById('year-select').addEventListener('change', (e) => {
+            currentYear = e.target.value;
+            loadYearData(currentYear);
+        });
+        document.getElementById('btn-sync-sheets').addEventListener('click', syncFromGoogleSheets);
+        document.getElementById('btn-save').addEventListener('click', saveDataToCloud);
+        document.getElementById('btn-upload').addEventListener('click', openUploadModal);
+        document.getElementById('btn-close-modal').addEventListener('click', closeUploadModal);
+        document.getElementById('btn-cancel-modal').addEventListener('click', closeUploadModal);
+
+        // --- Arranque da Aplicação ---
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUser = user;
+                // Apenas se ainda não tivemos carregado, tentamos sincronizar a partir do Firebase ou do Sheet
+                await loadYearData(currentYear);
+            }
+        });
+
+        initAuth();
+
+    </script>
+</body>
+</html>
